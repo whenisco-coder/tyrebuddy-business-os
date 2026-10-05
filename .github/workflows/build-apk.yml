@@ -1,0 +1,51 @@
+name: Build TyreBuddy Offline APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Ensure Capacitor Packages
+        run: npm install @capacitor/core @capacitor/android @capacitor/cli --save
+
+      - name: Build Web Production Files
+        run: npm run build
+
+      - name: Add Android Platform & Sync
+        run: |
+          npx cap add android || true
+          npx cap sync
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Make Gradlew Executable & Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TyreBuddy-Offline-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
