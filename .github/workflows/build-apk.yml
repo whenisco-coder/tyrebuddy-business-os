@@ -21,16 +21,14 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Ensure Capacitor Packages
-        run: npm install @capacitor/core @capacitor/android @capacitor/cli --save
-
       - name: Build Web Production Files
         run: npm run build
 
-      - name: Add Android Platform & Sync
+      - name: Initialize & Sync Capacitor Android
         run: |
+          npx cap init TyreBuddy com.tyrebuddy.app --web-dir dist || true
           npx cap add android || true
-          npx cap sync
+          npx cap sync android
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -38,7 +36,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Make Gradlew Executable & Build Debug APK
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
