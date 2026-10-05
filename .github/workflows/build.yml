@@ -21,6 +21,9 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Ensure Capacitor CLI & Android
+        run: npm install @capacitor/core @capacitor/android @capacitor/cli
+
       - name: Build Web Production Files
         run: npm run build
 
