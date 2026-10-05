@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TyreBuddy</string>
+    <string name="title_activity_main">TyreBuddy</string>
+    <string name="package_name">com.tyrebuddy.app</string>
+    <string name="custom_url_scheme">com.tyrebuddy.app</string>
+</resources>

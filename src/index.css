@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+  
+  .font-mono, .tabular-nums {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media print {
+  /* Page margins & printer setup */
+  @page {
+    margin: 0;
+    size: auto;
+  }
+
+  @page a5-invoice {
+    size: 148mm 210mm;
+    margin: 4mm;
+  }
+
+  html, body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+
+  .print-break-after {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .print-no-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  /* Make sure borders print sharply */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* ==========================================================================
+     A5 Invoice Print Layout: Pin Footer & Signature to Page Bottom
+     ========================================================================== */
+
+  /* Ensure the printed A5 canvas matches standard A5 paper height (210mm) */
+  .invoice-a5,
+  .invoice-canvas-a5,
+  [data-page-size="A5"] {
+    page: a5-invoice;
+    width: 148mm !important;
+    max-width: 148mm !important;
+    min-height: 210mm !important;
+    height: 210mm !important;
+    max-height: 210mm !important;
+    padding: 4mm !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: hidden !important;
+    position: relative !important;
+  }
+
+  /* The outer black border wrapper stretches to 100% of the A5 printable area */
+  .invoice-a5 .invoice-border-wrapper,
+  .invoice-canvas-a5 .invoice-border-wrapper,
+  [data-page-size="A5"] .invoice-border-wrapper,
+  .invoice-a5 > div:first-child,
+  [data-page-size="A5"] > div:first-child {
+    min-height: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    flex: 1 1 auto !important;
+    box-sizing: border-box !important;
+    border-width: 2px !important;
+    border-color: #000000 !important;
+  }
+
+  /* The items table container flexes to fill available vertical space */
+  .invoice-a5 .invoice-items-wrapper,
+  .invoice-canvas-a5 .invoice-items-wrapper,
+  [data-page-size="A5"] .invoice-items-wrapper,
+  .invoice-a5 .overflow-x-auto,
+  [data-page-size="A5"] .overflow-x-auto {
+    flex: 1 1 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+  }
+
+  .invoice-a5 .invoice-items-wrapper table,
+  .invoice-canvas-a5 .invoice-items-wrapper table,
+  [data-page-size="A5"] .invoice-items-wrapper table,
+  .invoice-a5 .overflow-x-auto table,
+  [data-page-size="A5"] .overflow-x-auto table {
+    width: 100% !important;
+  }
+
+  /* The bottom group (Totals + HSN + Payment & Signature) pushes down to the bottom */
+  .invoice-a5 .invoice-bottom-section,
+  .invoice-canvas-a5 .invoice-bottom-section,
+  [data-page-size="A5"] .invoice-bottom-section {
+    margin-top: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* The signature and stamp footer block stays pinned flush to the bottom */
+  .invoice-a5 .invoice-footer-signature-block,
+  .invoice-a5 .invoice-signature-block,
+  .invoice-a5 .invoice-footer-block,
+  .invoice-canvas-a5 .invoice-footer-signature-block,
+  [data-page-size="A5"] .invoice-footer-signature-block,
+  [data-page-size="A5"] .invoice-signature-block,
+  [data-page-size="A5"] .invoice-footer-block {
+    margin-top: auto !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    background-color: #ffffff !important;
+  }
+
+  /* Ensure signature container preserves height and tight alignment */
+  .invoice-a5 .invoice-signature-box,
+  [data-page-size="A5"] .invoice-signature-box {
+    min-height: 50px !important;
+  }
+}

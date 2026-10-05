@@ -1,0 +1,7 @@
+{
+  "name": "Tyrebuddy Business OS",
+  "description": "Offline-first Business OS for Tyre & Spares Retail & Wholesale: Inventory, Orders, Tally-style GST Invoices, Courier Labels, B2B Credit Ledger, and Stock Batches.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
