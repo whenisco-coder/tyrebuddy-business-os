@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, CreditNote } from '../../types';
-import { HsnSummaryRow } from '../../utils/gst';   // <-- formatINR removed
+import { HsnSummaryRow } from '../../utils/gst';
 import { numberToIndianWords } from '../../utils/numberToWords';
 import { generateQrDataUrl, buildUpiPayUri } from '../../utils/barcode';
 import { Capacitor } from '@capacitor/core';
