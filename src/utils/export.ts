@@ -1,104 +1,85 @@
-export function downloadFile(filename: string, content: string, contentType: string = 'text/plain') {
-  const blob = new Blob([content], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
 
-export function exportToCsv(
-  filename: string,
-  arg2: string[] | Record<string, any>[],
-  arg3?: (string | number)[][]
+/**
+ * Saves a file to the device and opens the share menu.
+ * Works for both Native (APK) and Web (Browser).
+ */
+export async function saveAndShareFile(
+  filename: string, 
+  data: string, 
+  mimeType: string = 'text/plain'
 ) {
-  let headers: string[] = [];
-  let rows: (string | number)[][] = [];
+  if (Capacitor.isNativePlatform()) {
+    try {
+      let encoding = Encoding.UTF8;
+      let fileData = data;
 
-  if (Array.isArray(arg2) && arg2.length > 0 && typeof arg2[0] === 'object' && !Array.isArray(arg2[0])) {
-    // Array of objects passed
-    const data = arg2 as Record<string, any>[];
-    headers = Object.keys(data[0]);
-    rows = data.map(item => headers.map(h => item[h] ?? ''));
-  } else if (Array.isArray(arg2) && Array.isArray(arg3)) {
-    headers = arg2 as string[];
-    rows = arg3;
-  } else {
-    headers = Array.isArray(arg2) ? (arg2 as string[]) : [];
-    rows = [];
-  }
-
-  const escapeCell = (val: string | number) => {
-    const s = String(val ?? '');
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-      return `"${s.replace(/"/g, '""')}"`;
-    }
-    return s;
-  };
-
-  const headerLine = headers.map(escapeCell).join(',');
-  const rowLines = rows.map(r => r.map(escapeCell).join(',')).join('\n');
-  const csvContent = `${headerLine}\n${rowLines}`;
-
-  downloadFile(filename.endsWith('.csv') ? filename : `${filename}.csv`, csvContent, 'text/csv;charset=utf-8;');
-}
-
-export function parseCsv(text: string): { headers: string[]; rows: string[][] } {
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-  if (lines.length === 0) return { headers: [], rows: [] };
-
-  const parseLine = (line: string) => {
-    const result: string[] = [];
-    let insideQuotes = false;
-    let current = '';
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"' && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else if (char === '"') {
-        insideQuotes = !insideQuotes;
-      } else if (char === ',' && !insideQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
+      // If it's a PDF or Image, it comes as Base64. We need to handle it natively.
+      if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) {
+        encoding = Encoding.Base64;
+        // Remove the Data URI prefix (e.g., "data:application/pdf;base64,")
+        if (data.includes(',')) {
+          fileData = data.split(',')[1];
+        }
       }
+
+      // 1. Save the file to the phone's Documents folder
+      const result = await Filesystem.writeFile({
+        path: filename,
+        data: fileData,
+        directory: Directory.Documents,
+        encoding: encoding
+      });
+
+      // 2. Open the native Share menu
+      await Share.share({
+        title: 'Export File',
+        text: `Here is your file: ${filename}`,
+        url: result.uri,
+        dialogTitle: 'Share or Save File'
+      });
+      
+      alert('File saved successfully to Documents folder!');
+    } catch (e) {
+      console.error('Error saving file', e);
+      alert('Failed to save file. Please ensure the app has storage permissions.');
     }
-    result.push(current.trim());
-    return result;
-  };
+  } else {
+    // Web Browser Fallback
+    let blob: Blob;
+    if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) {
+      const base64Data = data.includes(',') ? data.split(',')[1] : data;
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      blob = new Blob([byteArray], { type: mimeType });
+    } else {
+      blob = new Blob([data], { type: mimeType });
+    }
 
-  const headers = parseLine(lines[0]);
-  const rows = lines.slice(1).map(parseLine);
-  return { headers, rows };
-}
-
-export function parseCsvToObjects(text: string): Record<string, string>[] {
-  const { headers, rows } = parseCsv(text);
-  const cleanHeaders = headers.map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
-  return rows.map(row => {
-    const obj: Record<string, string> = {};
-    cleanHeaders.forEach((h, idx) => {
-      obj[h] = row[idx] ?? '';
-    });
-    return obj;
-  });
-}
-
-export function checkBackupReminder(lastBackupDateStr?: string): { isOverdue: boolean; daysAgo: number } {
-  if (!lastBackupDateStr) {
-    return { isOverdue: true, daysAgo: 99 };
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
-  const lastDate = new Date(lastBackupDateStr).getTime();
-  const now = Date.now();
-  const diffDays = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
-  return {
-    isOverdue: diffDays >= 7,
-    daysAgo: diffDays,
-  };
+}
+
+// Keep this for any old CSV exports you might have
+export function downloadFile(filename: string, content: string, contentType: string = 'text/plain') {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
