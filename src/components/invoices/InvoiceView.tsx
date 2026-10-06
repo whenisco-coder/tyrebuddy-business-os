@@ -3,12 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, CreditNote } from '../../types';
 import { formatINR, HsnSummaryRow } from '../../utils/gst';
 import { numberToIndianWords } from '../../utils/numberToWords';
 import { generateQrDataUrl, buildUpiPayUri } from '../../utils/barcode';
+import { Capacitor } from '@capacitor/core';
+import html2pdf from 'html2pdf.js';
+import { saveAndShareFile } from '../../utils/export';
 import {
   Printer,
   FileText,
@@ -21,6 +24,7 @@ import {
   Sparkles,
   QrCode,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 
 interface InvoiceViewProps {
@@ -37,6 +41,10 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
   const [showCreditNoteModal, setShowCreditNoteModal] = useState<boolean>(false);
   const [returnReason, setReturnReason] = useState<string>('Customer return / Defective replacement');
   const [createdCn, setCreatedCn] = useState<CreditNote | null>(null);
+  
+  // NEW: State and Ref for PDF Generation
+  const [isGenerating, setIsGenerating] = useState(false);
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
   // User requirement: B2C GST not required; B2B requires full GST breakdown.
   // Defaults to false for B2C (clean retail memo), true for B2B (tax invoice).
@@ -67,8 +75,40 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
     updateOrder(order.id, { isProforma: checked });
   };
 
-  const handlePrint = () => {
-    window.print();
+  // NEW: PDF Generation and Native Printing Logic
+  const handlePrint = async () => {
+    if (!invoiceRef.current) {
+      alert('Invoice content not found');
+      return;
+    }
+
+    if (Capacitor.isNativePlatform()) {
+      setIsGenerating(true);
+
+      const opt = {
+        margin: 0.3,
+        filename: `Invoice-${order.invoiceNo || order.orderNo}.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'in', format: pageSize.toLowerCase(), orientation: 'portrait' as const }
+      };
+
+      try {
+        const pdfDataUri = await html2pdf().from(invoiceRef.current).set(opt).outputPdf('datauristring');
+        await saveAndShareFile(
+          `Invoice-${order.invoiceNo || order.orderNo}.pdf`,
+          pdfDataUri,
+          'application/pdf'
+        );
+      } catch (error) {
+        console.error('PDF generation failed', error);
+        alert('Failed to generate PDF. Please try again.');
+      } finally {
+        setIsGenerating(false);
+      }
+    } else {
+      window.print();
+    }
   };
 
   const handleCreateCreditNote = () => {
@@ -231,14 +271,17 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
             </button>
           </div>
 
-          {/* Print Button */}
+          {/* Print Button (UPDATED) */}
           <button
             type="button"
             onClick={handlePrint}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold shadow-xs"
+            disabled={isGenerating}
+            className={`flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold shadow-xs ${
+              isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-neutral-800'
+            }`}
           >
             <Printer className="w-3.5 h-3.5" />
-            <span>Print Invoice</span>
+            <span>{isGenerating ? 'Generating PDF...' : 'Print / Save PDF'}</span>
           </button>
 
           {/* Step 2: Next Courier Label Button (Fulfills "Invoice 1st afterwards labale") */}
@@ -277,6 +320,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
           Clean, Authentic, Compliant Invoice Canvas (A4 / A5)
           ========================================================================= */}
       <div
+        ref={invoiceRef} // <--- NEW: Ref added here for PDF generation
         data-page-size={pageSize}
         className={`mx-auto bg-white text-black font-sans shadow-sm border border-neutral-300 print:border-0 print:shadow-none invoice-document-canvas ${
           pageSize === 'A4'
@@ -414,7 +458,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
             </div>
           </div>
 
-          {/* 4. Itemized Table (Dynamic: Clean Retail B2C vs Detailed B2B Tax) */}
+              {/* 4. Itemized Table (Dynamic: Clean Retail B2C vs Detailed B2B Tax) */}
           <div className="overflow-x-auto invoice-items-wrapper flex-1">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -449,369 +493,206 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
                   )}
                 </tr>
               </thead>
-              <tbody>
-                {order.items.map((item, idx) => {
-                  const prodObj = products.find(p => p.id === item.productId);
-                  const itemRate = !showGstBreakdown
-                    ? (item.totalAmount / item.qty) // All-inclusive rate for retail
-                    : item.unitPrice;
-
-                  return (
-                    <tr key={item.id || idx} className="border-b border-neutral-300 font-mono text-[10px] align-top">
-                      <td className="p-1.5 border-r border-black text-center">{idx + 1}</td>
-                      <td className="p-1.5 border-r border-black font-sans">
-                        <div className="font-semibold text-black leading-tight">{item.name}</div>
-                        <div className="text-[9px] text-neutral-500 font-mono mt-0.5 flex items-center gap-1.5">
-                          {prodObj?.brand && <span className="font-bold text-neutral-700">{prodObj.brand}</span>}
-                          <span>SKU: {item.sku}</span>
-                          {prodObj?.warrantyMonths && <span>· {prodObj.warrantyMonths}M Warranty</span>}
-                        </div>
-                      </td>
-                      <td className="p-1.5 border-r border-black text-center">{item.hsn}</td>
-                      <td className="p-1.5 border-r border-black text-center font-bold">{item.qty}</td>
-
-                      {/* Clean Retail Mode (B2C) */}
-                      {!showGstBreakdown ? (
-                        <>
-                          <td className="p-1.5 border-r border-black text-right tabular-nums">
-                            {itemRate.toFixed(2)}
-                          </td>
-                          <td className="p-1.5 text-right tabular-nums font-bold">
-                            {item.totalAmount.toFixed(2)}
-                          </td>
-                        </>
-                      ) : (
-                        /* Full B2B Tax Invoice Mode */
-                        <>
-                          <td className="p-1.5 border-r border-black text-right tabular-nums">
-                            {item.unitPrice.toFixed(2)}
-                          </td>
-                          <td className="p-1.5 border-r border-black text-right tabular-nums font-semibold">
-                            {item.taxableAmount.toFixed(2)}
-                          </td>
-                          <td className="p-1.5 border-r border-black text-center font-bold">
-                            {item.gstPercent}%
-                          </td>
-                          {order.isGujarat ? (
-                            <>
-                              <td className="p-1.5 border-r border-black text-right tabular-nums">
-                                {item.cgstAmount.toFixed(2)}
-                              </td>
-                              <td className="p-1.5 border-r border-black text-right tabular-nums">
-                                {item.sgstAmount.toFixed(2)}
-                              </td>
-                            </>
-                          ) : (
-                            <td className="p-1.5 border-r border-black text-right tabular-nums">
-                              {item.igstAmount.toFixed(2)}
-                            </td>
-                          )}
-                          <td className="p-1.5 text-right tabular-nums font-bold">
-                            {item.totalAmount.toFixed(2)}
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  );
-                })}
+              <tbody className="font-mono text-[10px]">
+                {order.items.map((item, index) => (
+                  <tr key={index} className="border-b border-neutral-300">
+                    <td className="p-1.5 border-r border-black text-center">{index + 1}</td>
+                    <td className="p-1.5 border-r border-black">{item.name}</td>
+                    <td className="p-1.5 border-r border-black text-center">{item.hsn}</td>
+                    <td className="p-1.5 border-r border-black text-center">{item.qty}</td>
+                    
+                    {!showGstBreakdown ? (
+                      <>
+                        <td className="p-1.5 border-r border-black text-right">{item.unitPrice.toFixed(2)}</td>
+                        <td className="p-1.5 text-right">{item.totalAmount.toFixed(2)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="p-1.5 border-r border-black text-right">{item.unitPrice.toFixed(2)}</td>
+                        <td className="p-1.5 border-r border-black text-right">{item.taxableAmount.toFixed(2)}</td>
+                        <td className="p-1.5 border-r border-black text-center">{item.gstPercent}%</td>
+                        {order.isGujarat ? (
+                          <>
+                            <td className="p-1.5 border-r border-black text-right">{item.cgstAmount.toFixed(2)}</td>
+                            <td className="p-1.5 border-r border-black text-right">{item.sgstAmount.toFixed(2)}</td>
+                          </>
+                        ) : (
+                          <td className="p-1.5 border-r border-black text-right">{item.igstAmount.toFixed(2)}</td>
+                        )}
+                        <td className="p-1.5 text-right">{item.totalAmount.toFixed(2)}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
-          {/* 5. Bottom Section: Totals, Payment & Signature (Pinned to bottom on A5 print) */}
-          <div className="invoice-bottom-section mt-auto flex flex-col">
-            {/* Totals & Calculations Row */}
-            <div className="grid grid-cols-12 border-t-2 border-black text-xs font-mono">
-              {/* Left Column: Amount in Words + Terms */}
-              <div className="col-span-7 p-3 border-r border-black flex flex-col justify-between space-y-3">
-                <div>
-                  <span className="text-[9px] uppercase font-bold text-neutral-500 block">
-                    AMOUNT IN WORDS (INR):
-                  </span>
-                  <p className="font-bold text-xs capitalize text-black leading-snug">
-                    {numberToIndianWords(roundedGrandTotal)}
-                  </p>
-                  {order.notes && (
-                    <p className="mt-1 text-[10px] text-neutral-600 font-sans italic">
-                      <strong>Remarks:</strong> {order.notes}
-                    </p>
-                  )}
-                </div>
-
-                {/* Concise, Compliant Terms */}
-                <div className="pt-2 border-t border-neutral-300 text-[9px] text-neutral-600 font-sans space-y-1">
-                  {!showGstBreakdown ? (
-                    <div className="font-mono text-emerald-800 font-semibold">
-                      * All prices shown are inclusive of applicable GST taxes.
-                    </div>
-                  ) : (
-                    <div>
-                      * Certified that the particulars given above are true and correct. Input Tax Credit is admissible to registered recipient.
-                    </div>
-                  )}
-                  <div>
-                    1. Tyres and batteries carry standard manufacturer warranty as per company guidelines.
-                  </div>
-                  <div className="text-neutral-400 font-mono text-[8px]">
-                    Subject to Surat jurisdiction · This is a computer generated invoice.
-                  </div>
-                </div>
+          {/* 5. Totals & Summary Block */}
+          <div className="border-t-2 border-black grid grid-cols-2">
+            {/* Left Side: Amount in Words & Tax Summary */}
+            <div className="border-r border-black p-3 space-y-2">
+              <div className="text-[10px] font-mono">
+                <span className="font-bold block mb-1">Amount Chargeable (in words):</span>
+                <span className="italic">{numberToIndianWords(roundedGrandTotal)}</span>
               </div>
-
-              {/* Right Column: Numbers Breakdown */}
-              <div className="col-span-5 p-2.5 space-y-1 text-[11px]">
-                {/* For B2C: Clean total breakdown */}
-                {!showGstBreakdown ? (
-                  <>
-                    <div className="flex justify-between py-0.5 border-b border-neutral-200">
-                      <span className="text-neutral-600">Total Items Value:</span>
-                      <span className="font-semibold tabular-nums">{formatINR(order.grandTotal)}</span>
-                    </div>
-
-                    {order.discountAmount > 0 && (
-                      <div className="flex justify-between py-0.5 border-b border-neutral-200 text-emerald-700">
-                        <span>Discount Savings:</span>
-                        <span className="tabular-nums">- {formatINR(order.discountAmount)}</span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  /* For B2B: Taxable + CGST + SGST / IGST */
-                  <>
-                    <div className="flex justify-between py-0.5 border-b border-neutral-200">
-                      <span className="text-neutral-600">Taxable Subtotal:</span>
-                      <span className="font-semibold tabular-nums">{formatINR(order.subtotal)}</span>
-                    </div>
-
-                    {order.discountAmount > 0 && (
-                      <div className="flex justify-between py-0.5 border-b border-neutral-200 text-neutral-600">
-                        <span>Discount ({order.discountPercent}%):</span>
-                        <span className="tabular-nums">- {formatINR(order.discountAmount)}</span>
-                      </div>
-                    )}
-
-                    {order.isGujarat ? (
-                      <>
-                        <div className="flex justify-between py-0.5 border-b border-neutral-200">
-                          <span className="text-neutral-600">CGST (Central Tax):</span>
-                          <span className="font-semibold tabular-nums">{formatINR(order.cgstTotal)}</span>
-                        </div>
-                        <div className="flex justify-between py-0.5 border-b border-neutral-200">
-                          <span className="text-neutral-600">SGST (State Tax):</span>
-                          <span className="font-semibold tabular-nums">{formatINR(order.sgstTotal)}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex justify-between py-0.5 border-b border-neutral-200">
-                        <span className="text-neutral-600">IGST (Integrated Tax):</span>
-                        <span className="font-semibold tabular-nums">{formatINR(order.igstTotal)}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Round Off */}
-                <div className="flex justify-between py-0.5 border-b border-neutral-200 text-neutral-500 text-[10px]">
-                  <span>Round-off:</span>
-                  <span className="tabular-nums">
-                    {roundOffValue >= 0 ? `+ ${formatINR(roundOffValue)}` : `- ${formatINR(Math.abs(roundOffValue))}`}
-                  </span>
+              
+              {showGstBreakdown && hsnSummaryList.length > 0 && (
+                <div className="mt-4">
+                  <table className="w-full border-collapse text-[9px] font-mono">
+                    <thead>
+                      <tr className="border border-black bg-neutral-100">
+                        <th className="border border-black p-1">HSN/SAC</th>
+                        <th className="border border-black p-1">Taxable Value</th>
+                        <th className="border border-black p-1">IGST Rate</th>
+                        <th className="border border-black p-1">IGST Amount</th>
+                        <th className="border border-black p-1">Total Tax Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hsnSummaryList.map((row, idx) => (
+                        <tr key={idx}>
+                          <td className="border border-black p-1 text-center">{row.hsn}</td>
+                          <td className="border border-black p-1 text-right">{row.taxableValue.toFixed(2)}</td>
+                          <td className="border border-black p-1 text-center">{row.igstRate}%</td>
+                          <td className="border border-black p-1 text-right">{row.igstAmount.toFixed(2)}</td>
+                          <td className="border border-black p-1 text-right">{row.totalTax.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-
-                {/* Grand Total */}
-                <div className="flex justify-between py-1.5 border-t-2 border-black font-bold text-sm bg-neutral-100 print:bg-transparent">
-                  <span>NET PAYABLE:</span>
-                  <span className="tabular-nums">{formatINR(roundedGrandTotal)}</span>
-                </div>
-
-                <div className="flex justify-between py-0.5 text-[10px] text-neutral-600">
-                  <span>Payment Mode:</span>
-                  <span className="font-bold">{order.paymentStatus}</span>
-                </div>
-                {balanceDue > 0 && (
-                  <div className="flex justify-between py-0.5 text-[10px] text-red-600 font-bold">
-                    <span>Balance Due:</span>
-                    <span className="tabular-nums">{formatINR(balanceDue)}</span>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
-            {/* 6. HSN / SAC Summary Table (Rendered ONLY in B2B Mode; OMITTED in B2C Mode) */}
-            {showGstBreakdown && (
-              <div className="border-t border-black p-2 bg-neutral-50 print:bg-transparent">
-                <span className="text-[9px] font-mono font-bold uppercase text-neutral-700 block mb-1">
-                  HSN / SAC Tax Analysis:
-                </span>
-                <table className="w-full text-left font-mono text-[9px] border border-neutral-400 border-collapse">
-                  <thead>
-                    <tr className="bg-neutral-200 print:bg-transparent border-b border-neutral-400">
-                      <th className="p-1 border-r border-neutral-400">HSN</th>
-                      <th className="p-1 border-r border-neutral-400 text-right">Taxable (₹)</th>
-                      {order.isGujarat ? (
-                        <>
-                          <th className="p-1 border-r border-neutral-400 text-right">CGST Rate</th>
-                          <th className="p-1 border-r border-neutral-400 text-right">CGST Amt (₹)</th>
-                          <th className="p-1 border-r border-neutral-400 text-right">SGST Rate</th>
-                          <th className="p-1 border-r border-neutral-400 text-right">SGST Amt (₹)</th>
-                        </>
-                      ) : (
-                        <>
-                          <th className="p-1 border-r border-neutral-400 text-right">IGST Rate</th>
-                          <th className="p-1 border-r border-neutral-400 text-right">IGST Amt (₹)</th>
-                        </>
-                      )}
-                      <th className="p-1 text-right">Total Tax (₹)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {hsnSummaryList.map((row, idx) => (
-                      <tr key={idx} className="border-b border-neutral-300">
-                        <td className="p-1 border-r border-neutral-400 font-semibold">{row.hsn}</td>
-                        <td className="p-1 border-r border-neutral-400 text-right tabular-nums">{row.taxableValue.toFixed(2)}</td>
-                        {order.isGujarat ? (
-                          <>
-                            <td className="p-1 border-r border-neutral-400 text-right">{row.cgstRate}%</td>
-                            <td className="p-1 border-r border-neutral-400 text-right tabular-nums">{row.cgstAmount.toFixed(2)}</td>
-                            <td className="p-1 border-r border-neutral-400 text-right">{row.sgstRate}%</td>
-                            <td className="p-1 border-r border-neutral-400 text-right tabular-nums">{row.sgstAmount.toFixed(2)}</td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="p-1 border-r border-neutral-400 text-right">{row.igstRate}%</td>
-                            <td className="p-1 border-r border-neutral-400 text-right tabular-nums">{row.igstAmount.toFixed(2)}</td>
-                          </>
-                        )}
-                        <td className="p-1 text-right tabular-nums font-bold">{row.totalTax.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* 7. Payment UPI & Authorized Signature Block */}
-            <div className="grid grid-cols-12 border-t-2 border-black text-xs font-mono invoice-footer-signature-block invoice-signature-block">
-              {/* Payment Details (Col 8) */}
-              <div className="col-span-8 p-2.5 border-r border-black flex items-center gap-3">
-                {upiQrUrl && (
-                  <div className="flex flex-col items-center shrink-0">
-                    <img
-                      src={upiQrUrl}
-                      alt="UPI QR"
-                      className="w-20 h-20 border border-black p-0.5 bg-white"
-                    />
-                    <span className="text-[8px] font-bold text-neutral-600 mt-0.5">Scan to Pay UPI</span>
+            {/* Right Side: Final Totals */}
+            <div className="p-3 flex flex-col justify-end text-[11px] font-mono space-y-1">
+              {showGstBreakdown && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-600">Total Taxable Value:</span>
+                    <span>{order.taxableAmount.toFixed(2)}</span>
                   </div>
-                )}
-
-                <div className="space-y-0.5 text-[10px]">
-                  {showGstBreakdown ? (
-                    // B2B: Bank Transfer Details
+                  {order.isGujarat ? (
                     <>
-                      <div className="font-bold text-black uppercase tracking-wider text-[10px]">
-                        Bank &amp; Settlement:
+                      <div className="flex justify-between">
+                        <span className="text-neutral-600">Total CGST:</span>
+                        <span>{order.cgstAmount.toFixed(2)}</span>
                       </div>
-                      <div><strong>Bank:</strong> {settings.bankName} · <strong>IFSC:</strong> {settings.ifscCode}</div>
-                      <div><strong>A/C No:</strong> {settings.accountNumber} ({settings.accountName})</div>
-                      <div><strong>UPI ID:</strong> {settings.upiId}</div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-600">Total SGST:</span>
+                        <span>{order.sgstAmount.toFixed(2)}</span>
+                      </div>
                     </>
                   ) : (
-                    // B2C: Instant UPI
-                    <>
-                      <div className="font-bold text-black uppercase tracking-wider text-[10px]">
-                        Instant Digital Settlement:
-                      </div>
-                      <p className="text-neutral-600 text-[10px] leading-tight">
-                        Scan with GPay, PhonePe, Paytm or BHIM for instant verified receipt.
-                      </p>
-                      <div><strong>UPI ID:</strong> {settings.upiId}</div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Authorized Signatory (Col 4) */}
-              <div className="col-span-4 p-2 flex flex-col justify-between items-center text-center">
-                <span className="text-[9px] font-bold uppercase text-neutral-700">
-                  For {settings.businessName}
-                </span>
-
-                <div className="h-12 flex items-center justify-center invoice-signature-box">
-                  {settings.signatureUrl ? (
-                    <img
-                      src={settings.signatureUrl}
-                      alt="Signature"
-                      className="max-h-11 max-w-full object-contain"
-                    />
-                  ) : (
-                    <div className="border border-dashed border-neutral-300 px-2 py-0.5 text-[8px] text-neutral-400 font-sans">
-                      [Authorized Stamp &amp; Sign]
+                    <div className="flex justify-between">
+                      <span className="text-neutral-600">Total IGST:</span>
+                      <span>{order.igstAmount.toFixed(2)}</span>
                     </div>
                   )}
-                </div>
-
-                <span className="text-[9px] text-neutral-600 uppercase border-t border-black w-full pt-0.5 font-bold">
-                  Authorized Signatory
-                </span>
+                </>
+              )}
+              <div className="flex justify-between border-t border-black pt-1">
+                <span className="font-bold">Subtotal:</span>
+                <span className="font-bold">{order.grandTotal.toFixed(2)}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-600">Round Off:</span>
+                <span>{roundOffValue.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between border-t-2 border-black pt-1 text-sm">
+                <span className="font-bold">Grand Total:</span>
+                <span className="font-bold">₹{roundedGrandTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between pt-2">
+                <span className="text-neutral-600">Amount Paid:</span>
+                <span>₹{order.amountPaid.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between border-t border-neutral-300 pt-1">
+                <span className="font-bold text-red-600">Balance Due:</span>
+                <span className="font-bold text-red-600">₹{balanceDue.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 6. Footer: Declaration & Signature */}
+          <div className="border-t-2 border-black grid grid-cols-2 text-[10px]">
+            <div className="p-3 border-r border-black">
+              <span className="font-bold block mb-1">Declaration:</span>
+              <p className="text-neutral-600 leading-tight">
+                We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
+              </p>
+              {order.isProforma && (
+                <p className="mt-2 text-red-600 font-bold">
+                  * This is a Proforma Invoice and not a valid tax document for Input Tax Credit.
+                </p>
+              )}
+            </div>
+            <div className="p-3 flex flex-col items-end justify-between text-right">
+              <div>
+                <p className="font-bold">For {settings.businessName}</p>
+                {upiQrUrl && (
+                  <div className="mt-1 flex flex-col items-center">
+                    <img src={upiQrUrl} alt="UPI QR" className="w-16 h-16 border border-black" />
+                    <span className="text-[8px] mt-0.5">Scan to Pay</span>
+                  </div>
+                )}
+              </div>
+              <p className="mt-4 font-bold">Authorised Signatory</p>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Credit Note Generation Modal */}
+            {/* Credit Note Modal (No-Print) */}
       {showCreditNoteModal && (
-        <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 p-5 max-w-md w-full shadow-2xl space-y-4">
-            <h3 className="text-sm font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
-              <RotateCcw className="w-4 h-4" />
-              Generate Credit Note for {order.invoiceNo || order.orderNo}
+        <div className="no-print fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 p-6 max-w-md w-full shadow-lg">
+            <h3 className="text-lg font-bold mb-4 text-neutral-900 dark:text-neutral-100">
+              Generate Credit Note
             </h3>
-
-            <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                Reason for Return / Adjustment:
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
+              This will create a full credit note for Order #{order.orderNo} and reverse the entire invoice value.
+            </p>
+            <div className="mb-4">
+              <label className="block text-xs font-bold mb-1 text-neutral-700 dark:text-neutral-300">
+                Reason for Return
               </label>
-              <textarea
+              <input
+                type="text"
                 value={returnReason}
-                onChange={e => setReturnReason(e.target.value)}
-                rows={3}
-                className="w-full text-xs p-2 border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800"
+                onChange={(e) => setReturnReason(e.target.value)}
+                className="w-full border border-neutral-300 dark:border-neutral-700 p-2 text-sm bg-transparent text-neutral-900 dark:text-neutral-100"
               />
             </div>
-
-            <div className="p-3 bg-neutral-100 dark:bg-neutral-800 text-xs font-mono">
-              Total Credit Refund Amount: <strong>{formatINR(order.grandTotal)}</strong>
-            </div>
-
-            {createdCn && (
-              <div className="p-2 bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-mono flex items-center gap-1.5">
-                <Check className="w-4 h-4" />
-                <span>Issued: <strong>{createdCn.creditNoteNo}</strong></span>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+            <div className="flex justify-end gap-2">
               <button
-                type="button"
-                onClick={() => {
-                  setShowCreditNoteModal(false);
-                  setCreatedCn(null);
-                }}
-                className="px-3 py-1.5 text-xs border border-neutral-300 dark:border-neutral-700 font-mono"
+                onClick={() => setShowCreditNoteModal(false)}
+                className="px-4 py-2 text-sm font-bold border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
-                Close
+                Cancel
               </button>
               <button
-                type="button"
                 onClick={handleCreateCreditNote}
-                className="px-3 py-1.5 text-xs bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 font-bold font-mono"
+                className="px-4 py-2 text-sm font-bold bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 hover:bg-neutral-800"
               >
-                Confirm &amp; Issue Credit Note
+                Confirm & Create
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Created CN Alert */}
+      {createdCn && (
+        <div className="no-print fixed bottom-4 right-4 bg-green-600 text-white p-4 shadow-lg flex items-center gap-3 z-50">
+          <CheckCircle2 className="w-6 h-6" />
+          <div>
+            <p className="font-bold text-sm">Credit Note Created</p>
+            <p className="text-xs">CN #{createdCn.creditNoteNo} has been generated successfully.</p>
+          </div>
+          <button onClick={() => setCreatedCn(null)} className="ml-4 hover:text-green-200">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>
