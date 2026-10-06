@@ -6,24 +6,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, CreditNote } from '../../types';
-import { formatINR, HsnSummaryRow } from '../../utils/gst';
+import { HsnSummaryRow } from '../../utils/gst';
 import { numberToIndianWords } from '../../utils/numberToWords';
 import { generateQrDataUrl, buildUpiPayUri } from '../../utils/barcode';
 import { Capacitor } from '@capacitor/core';
-import html2pdf from 'html2pdf.js';
+// @ts-ignore
+import html2pdf from 'html2pdf.js/dist/html2pdf.min.js';
 import { saveAndShareFile } from '../../utils/export';
 import {
   Printer,
-  FileText,
   ArrowLeft,
   RotateCcw,
-  Check,
   Truck,
   CheckCircle2,
-  Receipt,
-  Sparkles,
-  QrCode,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 
@@ -34,24 +29,20 @@ interface InvoiceViewProps {
 }
 
 export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewLabel }) => {
-  const { settings, products, updateOrder, createCreditNote } = useStore();
+  const { settings, createCreditNote } = useStore();
   const [pageSize, setPageSize] = useState<'A4' | 'A5'>('A4');
   const [isProforma, setIsProforma] = useState<boolean>(order.isProforma || false);
   const [upiQrUrl, setUpiQrUrl] = useState<string>('');
   const [showCreditNoteModal, setShowCreditNoteModal] = useState<boolean>(false);
   const [returnReason, setReturnReason] = useState<string>('Customer return / Defective replacement');
   const [createdCn, setCreatedCn] = useState<CreditNote | null>(null);
-  
-  // NEW: State and Ref for PDF Generation
+
   const [isGenerating, setIsGenerating] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
-  // User requirement: B2C GST not required; B2B requires full GST breakdown.
-  // Defaults to false for B2C (clean retail memo), true for B2B (tax invoice).
   const isB2B = order.customerType === 'B2B';
   const [showGstBreakdown, setShowGstBreakdown] = useState<boolean>(isB2B);
 
-  // Generate UPI QR Code URL for balance due or total
   useEffect(() => {
     const balance =
       order.grandTotal - order.amountPaid > 0
@@ -70,12 +61,6 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
     });
   }, [order, settings]);
 
-  const handleToggleProforma = (checked: boolean) => {
-    setIsProforma(checked);
-    updateOrder(order.id, { isProforma: checked });
-  };
-
-  // NEW: PDF Generation and Native Printing Logic
   const handlePrint = async () => {
     if (!invoiceRef.current) {
       alert('Invoice content not found');
@@ -90,11 +75,15 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
         filename: `Invoice-${order.invoiceNo || order.orderNo}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'in', format: pageSize.toLowerCase(), orientation: 'portrait' as const }
+        jsPDF: { unit: 'in', format: pageSize.toLowerCase(), orientation: 'portrait' as const },
       };
 
       try {
-        const pdfDataUri = await html2pdf().from(invoiceRef.current).set(opt).outputPdf('datauristring');
+        const pdfDataUri = await html2pdf()
+          .from(invoiceRef.current)
+          .set(opt)
+          .outputPdf('datauristring');
+
         await saveAndShareFile(
           `Invoice-${order.invoiceNo || order.orderNo}.pdf`,
           pdfDataUri,
@@ -132,7 +121,6 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
     setCreatedCn(cn);
   };
 
-  // Calculate HSN summary table (used only in B2B Tax Invoice mode)
   const hsnSummaryMap = new Map<string, HsnSummaryRow>();
   order.items.forEach(it => {
     const key = `${it.hsn}-${it.gstPercent}`;
@@ -170,296 +158,270 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
     }
   };
 
-  // Calculations
   const roundedGrandTotal = Math.round(order.grandTotal);
   const roundOffValue = Math.round((roundedGrandTotal - order.grandTotal) * 100) / 100;
   const balanceDue = Math.max(0, roundedGrandTotal - order.amountPaid);
 
-  // Check if Ship To is identical to Bill To
   const isShipToSame =
     !order.billingAddress ||
     (order.billingAddress.addressLine === order.shippingAddress.addressLine &&
       order.billingAddress.pincode === order.shippingAddress.pincode);
-
   return (
-    <div className="space-y-4">
-      {/* Top Toolbar (No-Print) */}
-      <div className="no-print p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          {onBack && (
-            <button
-              onClick={onBack}
-              className="p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
-              title="Back to Orders"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold">
-                1. Invoice
-              </span>
-              <h1 className="text-base font-bold text-neutral-900 dark:text-neutral-100 font-mono">
-                {isProforma
-                  ? 'Proforma Invoice'
-                  : showGstBreakdown
-                  ? 'B2B Tax Invoice'
-                  : 'B2C Retail Bill / Cash Memo'}{' '}
-                · {order.invoiceNo || order.orderNo}
-              </h1>
-            </div>
-            <p className="text-xs text-neutral-500 font-mono mt-0.5">
-              Customer: {order.customerName} ({order.customerType}) · {order.orderDate} ·{' '}
-              {showGstBreakdown ? 'Full GST Tax Invoicing (Input Tax Credit)' : 'Clean Retail Bill (No GST columns)'}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Format Toggle: B2C Clean vs B2B Full Tax */}
-          <div className="flex items-center border border-neutral-300 dark:border-neutral-700 text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setShowGstBreakdown(false)}
-              className={`px-3 py-1 font-bold transition ${
-                !showGstBreakdown
-                  ? 'bg-amber-500 text-neutral-950 font-bold'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-              }`}
-              title="Clean retail invoice without GST columns (Standard for B2C consumer sales)"
-            >
-              Clean Retail (B2C)
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowGstBreakdown(true)}
-              className={`px-3 py-1 font-bold transition ${
-                showGstBreakdown
-                  ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
-              }`}
-              title="Full GST Tax Breakdown with CGST/SGST/IGST and HSN table (for B2B ITC claim)"
-            >
-              Full GST Tax (B2B)
-            </button>
-          </div>
-
-          {/* Paper Size Toggle */}
-          <div className="flex items-center border border-neutral-300 dark:border-neutral-700 text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setPageSize('A4')}
-              className={`px-2.5 py-1 ${
-                pageSize === 'A4'
-                  ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 font-bold'
-                  : 'text-neutral-600 dark:text-neutral-400'
-              }`}
-            >
-              A4
-            </button>
-            <button
-              type="button"
-              onClick={() => setPageSize('A5')}
-              className={`px-2.5 py-1 ${
-                pageSize === 'A5'
-                  ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 font-bold'
-                  : 'text-neutral-600 dark:text-neutral-400'
-              }`}
-            >
-              A5
-            </button>
-          </div>
-
-          {/* Print Button (UPDATED) */}
+  <div className="space-y-4">
+    <div className="no-print p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-3">
+        {onBack && (
           <button
-            type="button"
-            onClick={handlePrint}
-            disabled={isGenerating}
-            className={`flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold shadow-xs ${
-              isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-neutral-800'
-            }`}
+            onClick={onBack}
+            className="p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+            title="Back to Orders"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>{isGenerating ? 'Generating PDF...' : 'Print / Save PDF'}</span>
+            <ArrowLeft className="w-5 h-5" />
           </button>
-
-          {/* Step 2: Next Courier Label Button (Fulfills "Invoice 1st afterwards labale") */}
-          {onViewLabel && (
-            <button
-              type="button"
-              onClick={() => onViewLabel(order)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-mono font-bold transition shadow-xs"
-              title="Proceed to Step 2: Generate & Print Courier Shipping Label"
-            >
-              <Truck className="w-3.5 h-3.5" />
-              <span>Next: Courier Label (2nd) &rarr;</span>
-            </button>
-          )}
-
-          {/* Credit note button */}
-          <button
-            type="button"
-            onClick={() => setShowCreditNoteModal(true)}
-            className="p-1.5 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100"
-            title="Generate Credit Note"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
+        )}
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold">
+              1. Invoice
+            </span>
+            <h1 className="text-base font-bold text-neutral-900 dark:text-neutral-100 font-mono">
+              {isProforma
+                ? 'Proforma Invoice'
+                : showGstBreakdown
+                ? 'B2B Tax Invoice'
+                : 'B2C Retail Bill / Cash Memo'}{' '}
+              · {order.invoiceNo || order.orderNo}
+            </h1>
+          </div>
+          <p className="text-xs text-neutral-500 font-mono mt-0.5">
+            Customer: {order.customerName} ({order.customerType}) · {order.orderDate} ·{' '}
+            {showGstBreakdown ? 'Full GST Tax Invoicing (Input Tax Credit)' : 'Clean Retail Bill (No GST columns)'}
+          </p>
         </div>
       </div>
 
-      {/* Credit Note Alert if present */}
-      {order.creditNoteRef && (
-        <div className="no-print p-3 bg-neutral-100 dark:bg-neutral-800 border-l-4 border-neutral-900 text-xs text-neutral-800 dark:text-neutral-200 font-mono">
-          Credit note <strong>{order.creditNoteRef}</strong> has been issued for this invoice.
+      <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex items-center border border-neutral-300 dark:border-neutral-700 text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => setShowGstBreakdown(false)}
+            className={`px-3 py-1 font-bold transition ${
+              !showGstBreakdown
+                ? 'bg-amber-500 text-neutral-950 font-bold'
+                : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            }`}
+          >
+            Clean Retail (B2C)
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowGstBreakdown(true)}
+            className={`px-3 py-1 font-bold transition ${
+              showGstBreakdown
+                ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950'
+                : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            }`}
+          >
+            Full GST Tax (B2B)
+          </button>
         </div>
-      )}
 
-      {/* =========================================================================
-          Clean, Authentic, Compliant Invoice Canvas (A4 / A5)
-          ========================================================================= */}
-      <div
-        ref={invoiceRef} // <--- NEW: Ref added here for PDF generation
-        data-page-size={pageSize}
-        className={`mx-auto bg-white text-black font-sans shadow-sm border border-neutral-300 print:border-0 print:shadow-none invoice-document-canvas ${
-          pageSize === 'A4'
-            ? 'max-w-[210mm] min-h-[297mm] p-6 invoice-a4'
-            : 'max-w-[148mm] min-h-[210mm] p-3 text-[11px] invoice-a5 flex flex-col justify-between'
-        }`}
-      >
-        <div className="border-2 border-black invoice-border-wrapper flex flex-col flex-1 justify-between min-h-full">
-          {/* 1. Header Title Banner */}
-          <div className="border-b-2 border-black py-2 px-3 text-center bg-neutral-50 print:bg-transparent">
-            <h2 className="text-base font-bold tracking-wider uppercase font-mono">
-              {isProforma
-                ? 'PROFORMA INVOICE'
-                : showGstBreakdown
-                ? 'TAX INVOICE'
-                : 'RETAIL INVOICE / CASH MEMO'}
-            </h2>
-            <p className="text-[10px] text-neutral-600 font-mono">
-              {isProforma
-                ? '(Price Quotation Only · Not a GST Tax Invoice)'
-                : showGstBreakdown
-                ? '(Under Section 31 of CGST Act, 2017 · Eligible for Input Tax Credit)'
-                : '(Original for Recipient · Retail Cash Sale)'}
-            </p>
-          </div>
+        <div className="flex items-center border border-neutral-300 dark:border-neutral-700 text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => setPageSize('A4')}
+            className={`px-2.5 py-1 ${
+              pageSize === 'A4'
+                ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 font-bold'
+                : 'text-neutral-600 dark:text-neutral-400'
+            }`}
+          >
+            A4
+          </button>
+          <button
+            type="button"
+            onClick={() => setPageSize('A5')}
+            className={`px-2.5 py-1 ${
+              pageSize === 'A5'
+                ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 font-bold'
+                : 'text-neutral-600 dark:text-neutral-400'
+            }`}
+          >
+            A5
+          </button>
+        </div>
 
-          {/* 2. Business (Seller) & Invoice Details Matrix */}
-          <div className="grid grid-cols-2 border-b border-black">
-            {/* Seller Info (Left) */}
-            <div className="p-3 border-r border-black space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider">
-                  ISSUED BY (SELLER)
-                </span>
-                {settings.logoUrl && (
-                  <img
-                    src={settings.logoUrl}
-                    alt="Logo"
-                    referrerPolicy="no-referrer"
-                    className="h-7 max-w-[90px] object-contain"
-                  />
-                )}
-              </div>
-              <h3 className="text-sm font-bold uppercase tracking-tight">{settings.businessName}</h3>
-              <p className="text-[11px] text-neutral-700 leading-snug">{settings.address}</p>
-              <div className="text-[11px] font-mono pt-1 space-y-0.5">
-                <div>
-                  <strong>GSTIN:</strong> {settings.gstin}
-                </div>
-                <div>
-                  <strong>State:</strong> {settings.state} (Code {settings.stateCode}) · <strong>Phone:</strong> {settings.phone}
-                </div>
-              </div>
-            </div>
+        <button
+          type="button"
+          onClick={handlePrint}
+          disabled={isGenerating}
+          className={`flex items-center gap-1.5 px-4 py-1.5 bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 text-xs font-mono font-bold shadow-xs ${
+            isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-neutral-800'
+          }`}
+        >
+          <Printer className="w-3.5 h-3.5" />
+          <span>{isGenerating ? 'Generating PDF...' : 'Print / Save PDF'}</span>
+        </button>
 
-            {/* Invoice Meta Numbers (Right) */}
-            <div className="p-3 space-y-1 font-mono text-[11px]">
-              <div className="flex justify-between border-b border-neutral-300 pb-1">
-                <span className="text-neutral-600 font-semibold">Invoice No:</span>
-                <span className="font-bold text-xs text-black">{order.invoiceNo || order.orderNo}</span>
-              </div>
-              <div className="flex justify-between border-b border-neutral-300 pb-1">
-                <span className="text-neutral-600 font-semibold">Dated:</span>
-                <span className="font-bold">{formatDateDDMonYYYY(order.orderDate)}</span>
-              </div>
-              <div className="flex justify-between border-b border-neutral-300 pb-1">
-                <span className="text-neutral-600 font-semibold">Order Ref:</span>
-                <span>{order.orderNo}</span>
-              </div>
-              <div className="flex justify-between border-b border-neutral-300 pb-1">
-                <span className="text-neutral-600 font-semibold">Place of Supply:</span>
-                <span className="font-bold">
-                  {order.shippingAddress.state} ({order.isGujarat ? 'State Code 24' : 'Inter-State'})
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-600 font-semibold">Customer Type:</span>
-                <span className="font-bold">{order.customerType} ({showGstBreakdown ? 'B2B Registered' : 'B2C Consumer'})</span>
-              </div>
-            </div>
-          </div>
+        {onViewLabel && (
+          <button
+            type="button"
+            onClick={() => onViewLabel(order)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-mono font-bold transition shadow-xs"
+          >
+            <Truck className="w-3.5 h-3.5" />
+            <span>Next: Courier Label (2nd) &rarr;</span>
+          </button>
+        )}
 
-          {/* 3. Customer (Buyer & Consignee) Details */}
-          <div className="border-b-2 border-black p-3 text-[11px]">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Buyer Information */}
-              <div className="space-y-0.5">
-                <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider block">
-                  BILLED TO (BUYER)
-                </span>
-                <h4 className="font-bold text-xs uppercase">{order.customerName}</h4>
-                <p className="text-neutral-700 leading-snug">
-                  {order.billingAddress?.addressLine || order.shippingAddress.addressLine}
-                </p>
-                <p className="text-neutral-700 font-mono text-[10px]">
-                  {order.billingAddress?.city || order.shippingAddress.city},{' '}
-                  {order.billingAddress?.state || order.shippingAddress.state} -{' '}
-                  {order.billingAddress?.pincode || order.shippingAddress.pincode}
-                </p>
-                <div className="pt-0.5 font-mono text-[10px] space-y-0.5">
-                  <div>
-                    <strong>Phone:</strong> {order.customerPhone}
-                  </div>
-                  {order.customerGstin && (
-                    <div>
-                      <strong>GSTIN / UIN:</strong> {order.customerGstin}
-                    </div>
-                  )}
-                </div>
-              </div>
+        <button
+          type="button"
+          onClick={() => setShowCreditNoteModal(true)}
+          className="p-1.5 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
 
-              {/* Consignee (Ship To) - Shown if different or if tracking exists */}
-              {!isShipToSame ? (
-                <div className="space-y-0.5 border-t md:border-t-0 md:border-l border-neutral-300 md:pl-3">
-                  <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider block">
-                    SHIPPED TO (CONSIGNEE)
-                  </span>
-                  <h4 className="font-bold text-xs uppercase">{order.customerName}</h4>
-                  <p className="text-neutral-700 leading-snug">{order.shippingAddress.addressLine}</p>
-                  <p className="text-neutral-700 font-mono text-[10px]">
-                    {order.shippingAddress.city}, {order.shippingAddress.state} - {order.shippingAddress.pincode}
-                  </p>
-                  <div className="pt-0.5 font-mono text-[10px]">
-                    <strong>Dispatch via:</strong> {order.courierName || 'Local'} {order.awbNumber ? `(AWB: ${order.awbNumber})` : ''}
-                  </div>
-                </div>
-              ) : (
-                <div className="hidden md:flex flex-col justify-end text-right font-mono text-[10px] text-neutral-500">
-                  <div>Shipment Address: Same as Billing Address</div>
-                  {order.courierName && (
-                    <div>Courier: {order.courierName} {order.awbNumber ? `· AWB ${order.awbNumber}` : ''}</div>
-                  )}
-                </div>
+    {order.creditNoteRef && (
+      <div className="no-print p-3 bg-neutral-100 dark:bg-neutral-800 border-l-4 border-neutral-900 text-xs text-neutral-800 dark:text-neutral-200 font-mono">
+        Credit note <strong>{order.creditNoteRef}</strong> has been issued for this invoice.
+      </div>
+    )}
+
+    <div
+      ref={invoiceRef}
+      data-page-size={pageSize}
+      className={`mx-auto bg-white text-black font-sans shadow-sm border border-neutral-300 print:border-0 print:shadow-none invoice-document-canvas ${
+        pageSize === 'A4'
+          ? 'max-w-[210mm] min-h-[297mm] p-6 invoice-a4'
+          : 'max-w-[148mm] min-h-[210mm] p-3 text-[11px] invoice-a5 flex flex-col justify-between'
+      }`}
+    >
+      <div className="border-2 border-black invoice-border-wrapper flex flex-col flex-1 justify-between min-h-full">
+        <div className="border-b-2 border-black py-2 px-3 text-center bg-neutral-50 print:bg-transparent">
+          <h2 className="text-base font-bold tracking-wider uppercase font-mono">
+            {isProforma
+              ? 'PROFORMA INVOICE'
+              : showGstBreakdown
+              ? 'TAX INVOICE'
+              : 'RETAIL INVOICE / CASH MEMO'}
+          </h2>
+          <p className="text-[10px] text-neutral-600 font-mono">
+            {isProforma
+              ? '(Price Quotation Only · Not a GST Tax Invoice)'
+              : showGstBreakdown
+              ? '(Under Section 31 of CGST Act, 2017 · Eligible for Input Tax Credit)'
+              : '(Original for Recipient · Retail Cash Sale)'}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 border-b border-black">
+          <div className="p-3 border-r border-black space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider">
+                ISSUED BY (SELLER)
+              </span>
+              {settings.logoUrl && (
+                <img
+                  src={settings.logoUrl}
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-7 max-w-[90px] object-contain"
+                />
               )}
             </div>
+            <h3 className="text-sm font-bold uppercase tracking-tight">{settings.businessName}</h3>
+            <p className="text-[11px] text-neutral-700 leading-snug">{settings.address}</p>
+            <div className="text-[11px] font-mono pt-1 space-y-0.5">
+              <div>
+                <strong>GSTIN:</strong> {settings.gstin}
+              </div>
+              <div>
+                <strong>State:</strong> {settings.state} (Code {settings.stateCode}) · <strong>Phone:</strong> {settings.phone}
+              </div>
+            </div>
           </div>
 
-              {/* 4. Itemized Table (Dynamic: Clean Retail B2C vs Detailed B2B Tax) */}
-          <div className="overflow-x-auto invoice-items-wrapper flex-1">
+          <div className="p-3 space-y-1 font-mono text-[11px]">
+            <div className="flex justify-between border-b border-neutral-300 pb-1">
+              <span className="text-neutral-600 font-semibold">Invoice No:</span>
+              <span className="font-bold text-xs text-black">{order.invoiceNo || order.orderNo}</span>
+            </div>
+            <div className="flex justify-between border-b border-neutral-300 pb-1">
+              <span className="text-neutral-600 font-semibold">Dated:</span>
+              <span className="font-bold">{formatDateDDMonYYYY(order.orderDate)}</span>
+            </div>
+            <div className="flex justify-between border-b border-neutral-300 pb-1">
+              <span className="text-neutral-600 font-semibold">Order Ref:</span>
+              <span>{order.orderNo}</span>
+            </div>
+            <div className="flex justify-between border-b border-neutral-300 pb-1">
+              <span className="text-neutral-600 font-semibold">Place of Supply:</span>
+              <span className="font-bold">
+                {order.shippingAddress.state} ({order.isGujarat ? 'State Code 24' : 'Inter-State'})
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-neutral-600 font-semibold">Customer Type:</span>
+              <span className="font-bold">{order.customerType} ({showGstBreakdown ? 'B2B Registered' : 'B2C Consumer'})</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-b-2 border-black p-3 text-[11px]">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-0.5">
+              <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider block">
+                BILLED TO (BUYER)
+              </span>
+              <h4 className="font-bold text-xs uppercase">{order.customerName}</h4>
+              <p className="text-neutral-700 leading-snug">
+                {order.billingAddress?.addressLine || order.shippingAddress.addressLine}
+              </p>
+              <p className="text-neutral-700 font-mono text-[10px]">
+                {order.billingAddress?.city || order.shippingAddress.city},{' '}
+                {order.billingAddress?.state || order.shippingAddress.state} -{' '}
+                {order.billingAddress?.pincode || order.shippingAddress.pincode}
+              </p>
+              <div className="pt-0.5 font-mono text-[10px] space-y-0.5">
+                <div>
+                  <strong>Phone:</strong> {order.customerPhone}
+                </div>
+                {order.customerGstin && (
+                  <div>
+                    <strong>GSTIN / UIN:</strong> {order.customerGstin}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {!isShipToSame ? (
+              <div className="space-y-0.5 border-t md:border-t-0 md:border-l border-neutral-300 md:pl-3">
+                <span className="text-[9px] uppercase font-bold text-neutral-500 font-mono tracking-wider block">
+                  SHIPPED TO (CONSIGNEE)
+                </span>
+                <h4 className="font-bold text-xs uppercase">{order.customerName}</h4>
+                <p className="text-neutral-700 leading-snug">{order.shippingAddress.addressLine}</p>
+                <p className="text-neutral-700 font-mono text-[10px]">
+                  {order.shippingAddress.city}, {order.shippingAddress.state} - {order.shippingAddress.pincode}
+                </p>
+                <div className="pt-0.5 font-mono text-[10px]">
+                  <strong>Dispatch via:</strong> {order.courierName || 'Local'} {order.awbNumber ? `(AWB: ${order.awbNumber})` : ''}
+                </div>
+              </div>
+            ) : (
+              <div className="hidden md:flex flex-col justify-end text-right font-mono text-[10px] text-neutral-500">
+                <div>Shipment Address: Same as Billing Address</div>
+                {order.courierName && (
+                  <div>Courier: {order.courierName} {order.awbNumber ? `· AWB ${order.awbNumber}` : ''}</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+                  <div className="overflow-x-auto invoice-items-wrapper flex-1">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-[10px]">
@@ -467,15 +429,13 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
                   <th className="p-1.5 border-r border-black">Description of Goods</th>
                   <th className="p-1.5 border-r border-black w-20 text-center">HSN</th>
                   <th className="p-1.5 border-r border-black w-12 text-center">Qty</th>
-                  
-                  {/* In B2C Mode: Rate & Amount only (No GST columns) */}
+
                   {!showGstBreakdown ? (
                     <>
                       <th className="p-1.5 border-r border-black w-24 text-right">Rate (₹)</th>
                       <th className="p-1.5 text-right w-28">Amount (₹)</th>
                     </>
                   ) : (
-                    /* In B2B Mode: Full Indian Tax Invoicing Columns */
                     <>
                       <th className="p-1.5 border-r border-black w-20 text-right">Rate (₹)</th>
                       <th className="p-1.5 border-r border-black w-24 text-right">Taxable (₹)</th>
@@ -500,7 +460,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
                     <td className="p-1.5 border-r border-black">{item.name}</td>
                     <td className="p-1.5 border-r border-black text-center">{item.hsn}</td>
                     <td className="p-1.5 border-r border-black text-center">{item.qty}</td>
-                    
+
                     {!showGstBreakdown ? (
                       <>
                         <td className="p-1.5 border-r border-black text-right">{item.unitPrice.toFixed(2)}</td>
@@ -528,15 +488,13 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
             </table>
           </div>
 
-          {/* 5. Totals & Summary Block */}
           <div className="border-t-2 border-black grid grid-cols-2">
-            {/* Left Side: Amount in Words & Tax Summary */}
             <div className="border-r border-black p-3 space-y-2">
               <div className="text-[10px] font-mono">
                 <span className="font-bold block mb-1">Amount Chargeable (in words):</span>
                 <span className="italic">{numberToIndianWords(roundedGrandTotal)}</span>
               </div>
-              
+
               {showGstBreakdown && hsnSummaryList.length > 0 && (
                 <div className="mt-4">
                   <table className="w-full border-collapse text-[9px] font-mono">
@@ -565,7 +523,6 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
               )}
             </div>
 
-            {/* Right Side: Final Totals */}
             <div className="p-3 flex flex-col justify-end text-[11px] font-mono space-y-1">
               {showGstBreakdown && (
                 <>
@@ -615,14 +572,13 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
             </div>
           </div>
 
-          {/* 6. Footer: Declaration & Signature */}
           <div className="border-t-2 border-black grid grid-cols-2 text-[10px]">
             <div className="p-3 border-r border-black">
               <span className="font-bold block mb-1">Declaration:</span>
               <p className="text-neutral-600 leading-tight">
                 We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
               </p>
-              {order.isProforma && (
+              {isProforma && (
                 <p className="mt-2 text-red-600 font-bold">
                   * This is a Proforma Invoice and not a valid tax document for Input Tax Credit.
                 </p>
@@ -643,7 +599,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
           </div>
         </div>
       </div>
-            {/* Credit Note Modal (No-Print) */}
+
       {showCreditNoteModal && (
         <div className="no-print fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 p-6 max-w-md w-full shadow-lg">
@@ -682,7 +638,6 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({ order, onBack, onViewL
         </div>
       )}
 
-      {/* Created CN Alert */}
       {createdCn && (
         <div className="no-print fixed bottom-4 right-4 bg-green-600 text-white p-4 shadow-lg flex items-center gap-3 z-50">
           <CheckCircle2 className="w-6 h-6" />
