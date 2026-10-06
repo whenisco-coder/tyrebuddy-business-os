@@ -3,7 +3,7 @@ import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 
 /**
- * Saves a file to the device and opens the share menu.
+ * Saves a file to the device and opens the native share menu.
  * Works for both Native (APK) and Web (Browser).
  */
 export async function saveAndShareFile(
@@ -16,7 +16,6 @@ export async function saveAndShareFile(
       let encoding = Encoding.UTF8;
       let fileData = data;
 
-      // If it's a PDF or Image, it comes as Base64.
       if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) {
         encoding = Encoding.Base64;
         if (data.includes(',')) {
@@ -44,7 +43,6 @@ export async function saveAndShareFile(
       alert('Failed to save file. Please check storage permissions.');
     }
   } else {
-    // Web Browser Fallback
     let blob: Blob;
     if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) {
       const base64Data = data.includes(',') ? data.split(',')[1] : data;
@@ -70,7 +68,7 @@ export async function saveAndShareFile(
 }
 
 /**
- * Kept for backward compatibility with older CSV/Text exports.
+ * Legacy download function for CSV/Text exports (web-only style).
  */
 export function downloadFile(
   filename: string,
@@ -88,21 +86,145 @@ export function downloadFile(
 }
 
 /**
+ * Converts an array of objects into a CSV string.
+ */
+export function objectsToCsv(rows: Record<string, any>[]): string {
+  if (!rows || rows.length === 0) return '';
+  const headers = Object.keys(rows[0]);
+  const escapeCell = (val: any): string => {
+    const s = val === null || val === undefined ? '' : String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+  const headerLine = headers.map(escapeCell).join(',');
+  const bodyLines = rows.map(row =>
+    headers.map(h => escapeCell(row[h])).join(',')
+  );
+  return [headerLine, ...bodyLines].join('\n');
+}
+
+/**
+ * Exports an array of objects as a CSV file and saves/shares it.
+ */
+export async function exportToCsv(
+  filename: string,
+  rows: Record<string, any>[]
+) {
+  const csv = objectsToCsv(rows);
+  await saveAndShareFile(filename, csv, 'text/csv');
+}
+
+/**
+ * Parses a CSV string into an array of objects.
+ * The first row is treated as the header.
+ * Handles quoted values and commas inside quotes.
+ */
+export function parseCsvToObjects(csvText: string): Record<string, string>[] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentField);
+      currentField = '';
+    } else if ((char === '\n' || char === '\r') && !insideQuotes) {
+      if (currentField !== '' || currentRow.length > 0) {
+        currentRow.push(currentField);
+        rows.push(currentRow);
+        currentRow = [];
+        currentField = '';
+      }
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField !== '' || currentRow.length > 0) {
+    currentRow.push(currentField);
+    rows.push(currentRow);
+  }
+
+  if (rows.length === 0) return [];
+
+  const headers = rows[0].map(h => h.trim());
+  const result: Record<string, string>[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length === 1 && row[0].trim() === '') continue;
+
+    const obj: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      obj[header] = (row[index] ?? '').trim();
+    });
+    result.push(obj);
+  }
+
+  return result;
+}
+
+/**
+ * Reads an uploaded File and returns its text content.
+ * Useful for CSV imports via <input type="file" />.
+ */
+export function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+/**
+ * Opens the native share menu with plain text.
+ */
+export async function shareText(title: string, text: string) {
+  if (Capacitor.isNativePlatform()) {
+    await Share.share({
+      title,
+      text,
+      dialogTitle: title,
+    });
+  } else if (navigator.share) {
+    await navigator.share({ title, text });
+  } else {
+    await navigator.clipboard.writeText(text);
+    alert('Copied to clipboard!');
+  }
+}
+
+/**
  * Checks whether the user should be reminded to take a backup.
  * Returns true if the last backup was more than 7 days ago (or never).
  */
 export function checkBackupReminder(): boolean {
   try {
     const lastBackup = localStorage.getItem('tyrebuddy_last_backup');
-    if (!lastBackup) {
-      return true; // Never backed up — show reminder
-    }
+    if (!lastBackup) return true;
     const lastDate = new Date(lastBackup);
     const now = new Date();
     const diffDays = Math.floor(
       (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)
     );
-    return diffDays >= 7; // Remind if 7+ days since last backup
+    return diffDays >= 7;
   } catch (e) {
     console.error('Error checking backup reminder:', e);
     return false;
@@ -118,4 +240,24 @@ export function markBackupDone(): void {
   } catch (e) {
     console.error('Error marking backup done:', e);
   }
-  }
+}
+
+/**
+ * Downloads a JSON backup of the provided data.
+ */
+export async function downloadBackup(
+  filename: string,
+  data: any
+): Promise<void> {
+  const json = JSON.stringify(data, null, 2);
+  await saveAndShareFile(filename, json, 'application/json');
+  markBackupDone();
+}
+
+/**
+ * Reads a JSON backup file from an uploaded File object.
+ */
+export async function readBackupFile(file: File): Promise<any> {
+  const text = await readFileAsText(file);
+  return JSON.parse(text);
+}
